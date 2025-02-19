@@ -1,6 +1,10 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MatLegacySnackBarModule as MatSnackBarModule } from '@angular/material/legacy-snack-bar';
 import { BuilderComponent } from '../builder/builder.component';
+import { NodeDatabaseService } from '../../services/node-database.service';
+import { NodeSelectionService } from '../../services/node-selection.service';
+import { NodeDatabaseServiceMock } from '../../mocks/node-database.service.mock';
+import { NodeSelectionServiceMock } from '../../mocks/node-selection.service.mock';
 
 import { BreadcrumbComponent } from './breadcrumb.component';
 
@@ -11,7 +15,13 @@ describe('BreadcrumbComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [BreadcrumbComponent],
-      providers: [BuilderComponent],
+      providers: [
+        { provide: NodeDatabaseService, useClass: NodeDatabaseServiceMock },
+        { provide: NodeSelectionService, useClass: NodeSelectionServiceMock },
+        { provide: BuilderComponent, useValue: {
+          expandNode: () => {}
+        }}
+      ],
       imports: [MatSnackBarModule],
     }).compileComponents();
 

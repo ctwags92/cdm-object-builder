@@ -10,15 +10,16 @@ import { JSON_ATTRIBUTE_NODE_TOKEN } from '../../tokens';
 export class EnumNodeComponent implements OnInit {
   values: string[] = [];
   trackBy = (index: number) => index;
+  enumType!: EnumType;
 
   constructor(
     @Inject(JSON_ATTRIBUTE_NODE_TOKEN)
     public jsonAttributeNode: JsonAttributeNode
   ) {}
 
-  enumType = this.jsonAttributeNode.definition.type as EnumType;
-
   ngOnInit(): void {
+    this.enumType = this.jsonAttributeNode.definition.type as EnumType;
+    
     if (!Array.isArray(this.jsonAttributeNode.value)) {
       const currentVal = this.jsonAttributeNode.value as string;
       this.jsonAttributeNode.value = [currentVal];
