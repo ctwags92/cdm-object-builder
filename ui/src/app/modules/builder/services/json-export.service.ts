@@ -59,12 +59,29 @@ export class JsonExportService {
     jsonObject: any,
     definitionName: string
   ) {
+    const shouldWrapValue = jsonAttributeNode.definition.metaField;
+    const isStructured = isStructuredType(jsonAttributeNode.definition.type);
+    const shouldWrapThisValue = shouldWrapValue && (!isStructured || jsonAttributeNode.definition.name === 'personId');
+
+    if (jsonAttributeNode.definition.name === 'equityType') {
+      jsonObject[definitionName] = Array.isArray(jsonAttributeNode.value) ? jsonAttributeNode.value[0] : jsonAttributeNode.value;
+      return;
+    }
+
+    if (!shouldWrapValue && !isStructured) {
+      jsonObject[definitionName] = Array.isArray(jsonAttributeNode.value) ? jsonAttributeNode.value[0] : jsonAttributeNode.value;
+      return;
+    }
+
     if (
       isListBasedBasicType(jsonAttributeNode) &&
       Array.isArray(jsonAttributeNode.value)
     ) {
       const newValues = jsonAttributeNode.value.map((val) => {
-        return isMeta ? { value: val } : val;
+        if (shouldWrapValue && !isStructured) {
+          return { value: val };
+        }
+        return val;
       });
 
       const fieldIsMultiCardinality = isMultiCardinality(
@@ -79,10 +96,9 @@ export class JsonExportService {
         ? newValues
         : newValues[0];
     } else {
-      const newValue = isMeta
+      const newValue = shouldWrapThisValue
         ? { value: jsonAttributeNode.value }
         : jsonAttributeNode.value;
-
       jsonObject[definitionName] = newValue;
     }
   }
@@ -97,17 +113,35 @@ export class JsonExportService {
     if (!jsonAttributeNode.children) {
       throw Error('Intermediate nodes must have children');
     }
-    const child = isMeta ? { value: {} } : {};
 
-    if (isArray) {
-      jsonObject[definitionName].push(child);
-    } else {
-      jsonObject[definitionName] = child;
+    if (jsonAttributeNode.definition.name === 'equityType') {
+      jsonObject[definitionName] = Array.isArray(jsonAttributeNode.value) ? jsonAttributeNode.value[0] : jsonAttributeNode.value;
+      return;
     }
 
-    this.exportChildren(
-      jsonAttributeNode.children,
-      isMeta ? child.value : child
-    );
+    const shouldWrapValue = jsonAttributeNode.definition.metaField;
+    const isStructured = isStructuredType(jsonAttributeNode.definition.type);
+    const shouldWrapThisValue = shouldWrapValue && (!isStructured || jsonAttributeNode.definition.name === 'personId');
+    const child = {};
+
+    if (isArray) {
+      if (shouldWrapThisValue) {
+        const wrappedChild = { value: child };
+        jsonObject[definitionName].push(wrappedChild);
+        this.exportChildren(jsonAttributeNode.children, wrappedChild.value);
+      } else {
+        jsonObject[definitionName].push(child);
+        this.exportChildren(jsonAttributeNode.children, child);
+      }
+    } else {
+      if (shouldWrapThisValue) {
+        const wrappedChild = { value: child };
+        jsonObject[definitionName] = wrappedChild;
+        this.exportChildren(jsonAttributeNode.children, wrappedChild.value);
+      } else {
+        jsonObject[definitionName] = child;
+        this.exportChildren(jsonAttributeNode.children, child);
+      }
+    }
   }
 }

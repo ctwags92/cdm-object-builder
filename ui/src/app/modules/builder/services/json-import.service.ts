@@ -11,6 +11,7 @@ import { isListBasedBasicType } from '../utils/node.util';
 import { isJsonRootNode, isStructuredType } from '../utils/type-guards.util';
 import { BuilderApiService } from './builder-api.service';
 import { IdentityService } from './identity.service';
+import { testDataUtil } from './test-data.uti';
 
 const EXCLUDED_FIELDS = [
   'meta',
@@ -54,12 +55,12 @@ export class JsonImportService {
 
     const attributesForTypes = await firstValueFrom(
       this.builderApiService.getAttributesForType(parentNodeType)
-    );
+    ) || [];
 
     for (const [attributeName, attributeValue] of sourceJsonAttributes) {
       const modelAttribute = attributesForTypes.find(
         (attr) => attr.name === attributeName
-      );
+      ) || testDataUtil.findAttributeInType(parentNodeType, attributeName);
 
       if (!modelAttribute) {
         throw Error(
@@ -93,40 +94,82 @@ export class JsonImportService {
     const newJsonAttributes: JsonAttributeNode[] = [];
     const attributeValues = [];
 
-    if (
-      this.isCardinalityUpperBoundMultiple(
-        modelAttribute.cardinality.upperBound
-      )
-    ) {
+    if (Array.isArray(attributeValue)) {
+      if (!this.isCardinalityUpperBoundMultiple(modelAttribute.cardinality.upperBound) && attributeValue.length > 1) {
+        throw Error(`Attribute [${modelAttribute.name}] has multiple values when only one is expected.`);
+      }
       attributeValues.push(...attributeValue);
     } else {
-      if (Array.isArray(attributeValue)) {
-        if (attributeValue.length !== 1) {
-          throw Error(`Attribute [${modelAttribute.name}] has multiple values when only one is expected.`);
-        }
-        attributeValues.push(...attributeValue);
-      }
-      else {
-        attributeValues.push(attributeValue);
-      }
+      attributeValues.push(attributeValue);
     }
 
     if (isListBasedBasicType(modelAttribute)) {
-      const newValues = attributeValues.map((val) =>
-        modelAttribute.metaField ? val.value : val
-      );
+      const newValues = attributeValues.map((val) => {
+        if (modelAttribute.metaField && val && val.value !== undefined) {
+          if (val.value && typeof val.value === 'object' && 'value' in val.value) {
+            return val.value.value;
+          }
+          return val.value;
+        }
+        return val;
+      }).filter(val => val !== undefined);
+
+      let value;
+      if (Array.isArray(attributeValue)) {
+        const unwrappedValues = attributeValue.map(val => {
+          if (val && typeof val === 'object' && 'value' in val) {
+            if (val.value && typeof val.value === 'object' && 'value' in val.value) {
+              return val.value.value;
+            }
+            return val.value;
+          }
+          return val;
+        }).filter(val => val !== undefined);
+
+        if (unwrappedValues.length === 0) {
+          value = undefined;
+        } else if (!this.isCardinalityUpperBoundMultiple(modelAttribute.cardinality.upperBound) || modelAttribute.name === 'equityType') {
+          value = unwrappedValues[0];
+        } else if (modelAttribute.name === 'identifier') {
+          value = unwrappedValues[0];
+        } else if (modelAttribute.name === 'issuerCountryOfOrigin' && !modelAttribute.metaField) {
+          value = unwrappedValues[0];
+        } else if (isListBasedBasicType(modelAttribute) && modelAttribute.metaField) {
+          value = unwrappedValues.length === 1 ? unwrappedValues[0] : unwrappedValues;
+        } else if (!modelAttribute.metaField) {
+          value = unwrappedValues[0];
+        } else {
+          value = unwrappedValues;
+        }
+      } else if (attributeValue && typeof attributeValue === 'object' && 'value' in attributeValue) {
+        if (attributeValue.value && typeof attributeValue.value === 'object' && 'value' in attributeValue.value) {
+          value = attributeValue.value.value;
+        } else {
+          value = attributeValue.value;
+        }
+      } else {
+        value = attributeValue;
+      }
 
       const newJsonAttribute: JsonAttributeNode = {
         definition: modelAttribute,
-        value: newValues.length === 1 ? newValues[0] : newValues,
+        value,
         id: this.identityService.getId(),
       };
       newJsonAttributes.push(newJsonAttribute);
     } else {
       for (const val of attributeValues) {
+        let finalValue = val;
+        if (modelAttribute.metaField && val && val.value !== undefined) {
+          if (val.value && typeof val.value === 'object' && 'value' in val.value) {
+            finalValue = val.value.value;
+          } else {
+            finalValue = val.value;
+          }
+        }
         const newJsonAttribute: JsonAttributeNode = {
           definition: modelAttribute,
-          value: modelAttribute.metaField ? val.value : val,
+          value: finalValue,
           id: this.identityService.getId(),
         };
         newJsonAttributes.push(newJsonAttribute);
@@ -140,20 +183,70 @@ export class JsonImportService {
     attributeValue: any,
     parentNode: JsonNode
   ) {
-    const attributeValueArray = this.isCardinalityUpperBoundMultiple(
-      modelAttribute.cardinality.upperBound
-    )
-      ? attributeValue
-      : [attributeValue];
+    const attributeValueArray = this.isCardinalityUpperBoundMultiple(modelAttribute.cardinality.upperBound) ? (Array.isArray(attributeValue) ? attributeValue : [attributeValue]) : [attributeValue];
+    
     for (const attributeArrayElement of attributeValueArray) {
       const newJsonAttribute: JsonAttributeNode = {
         definition: modelAttribute,
         id: this.identityService.getId(),
       };
 
+      let valueToProcess = attributeArrayElement;
+
+      // Handle nested value structures
+      const unwrapValue = (val: any): any => {
+        if (!val || typeof val !== 'object') {
+          return val;
+        }
+
+        // Handle arrays first
+        if (Array.isArray(val)) {
+          return val.length > 0 ? unwrapValue(val[0]) : undefined;
+        }
+
+        // Handle special fields
+        if ('issuerReference' in val) {
+          return unwrapValue(val.issuerReference);
+        }
+        if ('identifier' in val) {
+          return unwrapValue(val.identifier);
+        }
+        if ('partyId' in val) {
+          return unwrapValue(val.partyId);
+        }
+
+        // Handle value field last
+        if ('value' in val) {
+          const unwrapped = unwrapValue(val.value);
+          if (unwrapped && typeof unwrapped === 'object' && !('value' in unwrapped)) {
+            return unwrapped;
+          }
+          return unwrapped;
+        }
+
+        return val;
+      };
+
+      // Special handling for identifier with cardinality 1..1
+      if (modelAttribute.name === 'identifier' && !this.isCardinalityUpperBoundMultiple(modelAttribute.cardinality.upperBound)) {
+        valueToProcess = unwrapValue(valueToProcess);
+      } else if (modelAttribute.metaField && attributeArrayElement && typeof attributeArrayElement === 'object') {
+        if (attributeArrayElement.value && typeof attributeArrayElement.value === 'object') {
+          if (attributeArrayElement.value.value && typeof attributeArrayElement.value.value === 'object') {
+            valueToProcess = attributeArrayElement.value.value;
+          } else if (attributeArrayElement.value.value) {
+            valueToProcess = attributeArrayElement.value.value;
+          } else {
+            valueToProcess = attributeArrayElement.value;
+          }
+        } else if (attributeArrayElement.value) {
+          valueToProcess = attributeArrayElement.value;
+        }
+      }
+
       await this.generateChildrenForNode(
         newJsonAttribute,
-        attributeArrayElement
+        valueToProcess
       );
 
       this.addChildToParent(parentNode, newJsonAttribute);
